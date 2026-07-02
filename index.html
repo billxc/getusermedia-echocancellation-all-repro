@@ -32,10 +32,12 @@
   (~<span id="dur"></span>s each &times; <span id="n"></span> cases).
 </p>
 <p>
-  <b>Expected:</b> <code>off / default / true</code> capture audio;
-  <code>"all"</code> records <b>silence</b> when the host app lacks the macOS
-  system-audio permission (and works once <code>NSAudioCaptureUsageDescription</code>
-  is declared and granted).
+  <b>Expected:</b> <code>off / default / true</code> capture audio.
+  When the host app lacks the macOS system-audio permission, <code>"all"</code>
+  fails as either <b>STOPPED</b> (track <code>readyState</code> &rarr;
+  <code>ended</code>) or <b>LIVE but SILENT</b> (track stays <code>live</code> yet
+  delivers all-zero buffers) &mdash; the page reports which. It works once
+  <code>NSAudioCaptureUsageDescription</code> is declared and granted.
 </p>
 <button id="run">&#9654; Run All Tests</button>
 <div id="env"></div>
@@ -114,20 +116,41 @@ async function runCase(i, c, audioCtx) {
     const track = stream.getAudioTracks()[0];
     const settings = track.getSettings();
     const ecApplied = ("echoCancellation" in settings) ? String(settings.echoCancellation) : "(unset)";
+
+    // Track-state detection: on failure, did the track STOP (readyState "ended")
+    // or stay "live" while delivering all-zero buffers? Record readyState before
+    // and after, plus any ended/mute events fired during the measurement window.
+    const t0 = performance.now();
+    const readyStateStart = track.readyState;
+    let endedAtMs = null;
+    const events = [];
+    const stamp = () => Math.round(performance.now() - t0);
+    track.addEventListener("ended",  () => { endedAtMs = stamp(); events.push("ended@" + endedAtMs + "ms"); });
+    track.addEventListener("mute",   () => events.push("mute@" + stamp() + "ms"));
+    track.addEventListener("unmute", () => events.push("unmute@" + stamp() + "ms"));
+
     log(`    track.label = ${track.label}`);
     log(`    getSettings().echoCancellation = ${ecApplied}`);
-    log(`    muted=${track.muted} readyState=${track.readyState}`);
+    log(`    start: readyState=${readyStateStart} muted=${track.muted}`);
 
     const rms = await measureRms(stream, MEASURE_MS, audioCtx);
+
+    const readyStateEnd = track.readyState;
+    const stopped = readyStateEnd === "ended" || endedAtMs !== null;
     log(`    max RMS over ${MEASURE_MS}ms = ${rms.toFixed(5)}`);
+    log(`    end:   readyState=${readyStateEnd} muted=${track.muted}`);
+    log(`    events: ${events.length ? events.join(", ") : "(none)"}`);
 
     let verdict;
-    if (track.readyState === "ended") {
-      verdict = `<span class="bad">TRACK ENDED</span>`;
+    if (stopped) {
+      verdict = `<span class="bad">STOPPED &ndash; track ended${endedAtMs != null ? " @" + endedAtMs + "ms" : ""}</span>`;
+      log("    => STOPPED (stream ended)");
     } else if (rms < SILENCE_RMS) {
-      verdict = `<span class="bad">SILENCE</span>`;
+      verdict = `<span class="bad">LIVE but SILENT &ndash; running, all zeros</span>`;
+      log("    => LIVE + SILENT (stream running, producing zeros)");
     } else {
-      verdict = `<span class="ok">OK</span>`;
+      verdict = `<span class="ok">OK &ndash; audio</span>`;
+      log("    => OK (audio captured)");
     }
     addRow(i, c, ecApplied, rms, verdict);
   } catch (err) {

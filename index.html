@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebView2 getUserMedia echoCancellation Test</title>
+<style>
+  body { font: 14px/1.5 -apple-system, system-ui, sans-serif; margin: 24px; color: #1b1b1b; }
+  h1 { font-size: 18px; }
+  button { font-size: 15px; padding: 10px 18px; cursor: pointer; }
+  table { border-collapse: collapse; margin-top: 16px; width: 100%; max-width: 900px; }
+  th, td { border: 1px solid #ccc; padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f3f3f3; }
+  .ok    { color: #0a7a24; font-weight: 600; }
+  .bad   { color: #c40808; font-weight: 600; }
+  .warn  { color: #b56a00; font-weight: 600; }
+  .mono  { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  #env   { color: #555; font-size: 12px; margin-top: 8px; }
+  #log   { white-space: pre-wrap; background: #111; color: #ddd; padding: 12px;
+           border-radius: 6px; font-family: ui-monospace, Menlo, monospace;
+           font-size: 12px; margin-top: 16px; max-height: 260px; overflow: auto; }
+  .bar   { height: 12px; background: #ddd; border-radius: 6px; overflow: hidden; width: 160px; }
+  .bar > i { display: block; height: 100%; background: #0a7a24; width: 0; }
+</style>
+</head>
+<body>
+<h1>WebView2 · getUserMedia <code>echoCancellation</code> 测试</h1>
+<p>
+  依次用不同的 <code>echoCancellation</code> 约束打开麦克风，测量每种模式下麦克风实际捕获到的音量（RMS）。
+  <b>测试过程中请一直说话或制造声音</b>（约 <span id="dur"></span> 秒 × <span id="n"></span> 项）。
+</p>
+<p><b>预期：</b> WebView2 里 <code>off / default / true</code> 有音量、<code>"all"</code> 为静音；Edge 浏览器里四项都有音量。</p>
+<button id="run">▶ 开始测试（Run All Tests）</button>
+<div id="env"></div>
+<table id="results" hidden>
+  <thead>
+    <tr><th>#</th><th>请求的约束</th><th>协商后 settings.echoCancellation</th><th>捕获音量 (max RMS)</th><th>结论</th></tr>
+  </thead>
+  <tbody></tbody>
+</table>
+<div id="log"></div>
+
+<script>
+"use strict";
+
+const MEASURE_MS = 1500;          // 每项测量时长
+const SILENCE_RMS = 0.0006;       // 低于此视为"静音"（安静房间的本底噪声通常 > 0.001）
+const cases = [
+  { name: "默认 {audio:true}",                 constraints: { audio: true } },
+  { name: 'echoCancellation: false',           constraints: { audio: { echoCancellation: false } } },
+  { name: 'echoCancellation: true',            constraints: { audio: { echoCancellation: true } } },
+  { name: 'echoCancellation: "all" (ideal)',   constraints: { audio: { echoCancellation: "all" } } },
+  { name: 'echoCancellation: {exact:"all"}',   constraints: { audio: { echoCancellation: { exact: "all" } } } },
+];
+
+const logEl = document.getElementById("log");
+const tbody = document.querySelector("#results tbody");
+function log(msg) { logEl.textContent += msg + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+
+document.getElementById("env").textContent =
+  "UA: " + navigator.userAgent +
+  "  |  secureContext: " + window.isSecureContext;
+document.getElementById("dur").textContent = (MEASURE_MS / 1000).toFixed(1);
+document.getElementById("n").textContent = cases.length;
+
+// Measure max RMS of a live audio track over `ms` milliseconds.
+async function measureRms(stream, ms, audioCtx) {
+  const src = audioCtx.createMediaStreamSource(stream);
+  const analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  src.connect(analyser);                 // 不连到 destination，避免自激啸叫
+  const buf = new Float32Array(analyser.fftSize);
+  let maxRms = 0;
+  const t0 = performance.now();
+  while (performance.now() - t0 < ms) {
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / buf.length);
+    if (rms > maxRms) maxRms = rms;
+    await new Promise(r => setTimeout(r, 50));
+  }
+  src.disconnect();
+  return maxRms;
+}
+
+function addRow(i, c, settingsStr, rms, verdictHtml) {
+  const tr = document.createElement("tr");
+  const barW = rms == null ? 0 : Math.min(100, Math.round(rms * 4000));
+  const rmsCell = rms == null ? "—"
+    : `<div class="mono">${rms.toFixed(5)}</div>
+       <div class="bar"><i style="width:${barW}%"></i></div>`;
+  tr.innerHTML =
+    `<td>${i + 1}</td>` +
+    `<td>${c.name}<div class="mono">${JSON.stringify(c.constraints.audio)}</div></td>` +
+    `<td class="mono">${settingsStr}</td>` +
+    `<td>${rmsCell}</td>` +
+    `<td>${verdictHtml}</td>`;
+  tbody.appendChild(tr);
+}
+
+async function runCase(i, c, audioCtx) {
+  log(`\n[${i + 1}] ${c.name}`);
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia(c.constraints);
+    const track = stream.getAudioTracks()[0];
+    const settings = track.getSettings();
+    const ecApplied = ("echoCancellation" in settings) ? String(settings.echoCancellation) : "(unset)";
+    log(`    track.label = ${track.label}`);
+    log(`    getSettings().echoCancellation = ${ecApplied}`);
+    log(`    muted=${track.muted} readyState=${track.readyState}`);
+
+    const rms = await measureRms(stream, MEASURE_MS, audioCtx);
+    log(`    max RMS over ${MEASURE_MS}ms = ${rms.toFixed(5)}`);
+
+    let verdict;
+    if (track.readyState === "ended") {
+      verdict = `<span class="bad">TRACK ENDED</span>`;
+    } else if (rms < SILENCE_RMS) {
+      verdict = `<span class="bad">静音 SILENCE</span>`;
+    } else {
+      verdict = `<span class="ok">有音量 OK</span>`;
+    }
+    addRow(i, c, ecApplied, rms, verdict);
+  } catch (err) {
+    log(`    ✗ getUserMedia rejected: ${err.name}: ${err.message}`);
+    const v = err.name === "OverconstrainedError"
+      ? `<span class="warn">不支持该约束 (OverconstrainedError)</span>`
+      : `<span class="bad">${err.name}</span>`;
+    addRow(i, c, "—", null, v);
+  } finally {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    await new Promise(r => setTimeout(r, 400));   // 让设备释放，避免 device-in-use
+  }
+}
+
+document.getElementById("run").addEventListener("click", async () => {
+  document.getElementById("run").disabled = true;
+  document.getElementById("results").hidden = false;
+  tbody.innerHTML = "";
+  logEl.textContent = "";
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume();
+  log("AudioContext sampleRate = " + audioCtx.sampleRate);
+  for (let i = 0; i < cases.length; i++) {
+    await runCase(i, cases[i], audioCtx);
+  }
+  log("\n=== 完成。对比 WebView2 与 Edge 的结果。 ===");
+  await audioCtx.close();
+  document.getElementById("run").disabled = false;
+});
+</script>
+</body>
+</html>

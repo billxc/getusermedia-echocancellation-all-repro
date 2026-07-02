@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>WebView2 getUserMedia echoCancellation Test</title>
+<title>getUserMedia echoCancellation test</title>
 <style>
   body { font: 14px/1.5 -apple-system, system-ui, sans-serif; margin: 24px; color: #1b1b1b; }
   h1 { font-size: 18px; }
@@ -24,17 +24,24 @@
 </style>
 </head>
 <body>
-<h1>WebView2 · getUserMedia <code>echoCancellation</code> 测试</h1>
+<h1>getUserMedia <code>echoCancellation</code> test</h1>
 <p>
-  依次用不同的 <code>echoCancellation</code> 约束打开麦克风，测量每种模式下麦克风实际捕获到的音量（RMS）。
-  <b>测试过程中请一直说话或制造声音</b>（约 <span id="dur"></span> 秒 × <span id="n"></span> 项）。
+  Opens the microphone with different <code>echoCancellation</code> constraints and
+  measures the audio level (peak RMS) each mode <b>actually captures</b>.
+  <b>Keep speaking / making noise during the test</b>
+  (~<span id="dur"></span>s each &times; <span id="n"></span> cases).
 </p>
-<p><b>预期：</b> WebView2 里 <code>off / default / true</code> 有音量、<code>"all"</code> 为静音；Edge 浏览器里四项都有音量。</p>
-<button id="run">▶ 开始测试（Run All Tests）</button>
+<p>
+  <b>Expected:</b> <code>off / default / true</code> capture audio;
+  <code>"all"</code> records <b>silence</b> when the host app lacks the macOS
+  system-audio permission (and works once <code>NSAudioCaptureUsageDescription</code>
+  is declared and granted).
+</p>
+<button id="run">&#9654; Run All Tests</button>
 <div id="env"></div>
 <table id="results" hidden>
   <thead>
-    <tr><th>#</th><th>请求的约束</th><th>协商后 settings.echoCancellation</th><th>捕获音量 (max RMS)</th><th>结论</th></tr>
+    <tr><th>#</th><th>Requested constraint</th><th>Negotiated settings.echoCancellation</th><th>Captured level (max RMS)</th><th>Verdict</th></tr>
   </thead>
   <tbody></tbody>
 </table>
@@ -43,10 +50,10 @@
 <script>
 "use strict";
 
-const MEASURE_MS = 1500;          // 每项测量时长
-const SILENCE_RMS = 0.0006;       // 低于此视为"静音"（安静房间的本底噪声通常 > 0.001）
+const MEASURE_MS = 1500;          // measurement window per case
+const SILENCE_RMS = 0.0006;       // below this = "silence" (quiet-room noise is usually > 0.001)
 const cases = [
-  { name: "默认 {audio:true}",                 constraints: { audio: true } },
+  { name: "default {audio:true}",              constraints: { audio: true } },
   { name: 'echoCancellation: false',           constraints: { audio: { echoCancellation: false } } },
   { name: 'echoCancellation: true',            constraints: { audio: { echoCancellation: true } } },
   { name: 'echoCancellation: "all" (ideal)',   constraints: { audio: { echoCancellation: "all" } } },
@@ -68,7 +75,7 @@ async function measureRms(stream, ms, audioCtx) {
   const src = audioCtx.createMediaStreamSource(stream);
   const analyser = audioCtx.createAnalyser();
   analyser.fftSize = 2048;
-  src.connect(analyser);                 // 不连到 destination，避免自激啸叫
+  src.connect(analyser);                 // not connected to destination: avoid feedback
   const buf = new Float32Array(analyser.fftSize);
   let maxRms = 0;
   const t0 = performance.now();
@@ -87,7 +94,7 @@ async function measureRms(stream, ms, audioCtx) {
 function addRow(i, c, settingsStr, rms, verdictHtml) {
   const tr = document.createElement("tr");
   const barW = rms == null ? 0 : Math.min(100, Math.round(rms * 4000));
-  const rmsCell = rms == null ? "—"
+  const rmsCell = rms == null ? "&mdash;"
     : `<div class="mono">${rms.toFixed(5)}</div>
        <div class="bar"><i style="width:${barW}%"></i></div>`;
   tr.innerHTML =
@@ -118,20 +125,20 @@ async function runCase(i, c, audioCtx) {
     if (track.readyState === "ended") {
       verdict = `<span class="bad">TRACK ENDED</span>`;
     } else if (rms < SILENCE_RMS) {
-      verdict = `<span class="bad">静音 SILENCE</span>`;
+      verdict = `<span class="bad">SILENCE</span>`;
     } else {
-      verdict = `<span class="ok">有音量 OK</span>`;
+      verdict = `<span class="ok">OK</span>`;
     }
     addRow(i, c, ecApplied, rms, verdict);
   } catch (err) {
-    log(`    ✗ getUserMedia rejected: ${err.name}: ${err.message}`);
+    log(`    x getUserMedia rejected: ${err.name}: ${err.message}`);
     const v = err.name === "OverconstrainedError"
-      ? `<span class="warn">不支持该约束 (OverconstrainedError)</span>`
+      ? `<span class="warn">unsupported (OverconstrainedError)</span>`
       : `<span class="bad">${err.name}</span>`;
-    addRow(i, c, "—", null, v);
+    addRow(i, c, "&mdash;", null, v);
   } finally {
     if (stream) stream.getTracks().forEach(t => t.stop());
-    await new Promise(r => setTimeout(r, 400));   // 让设备释放，避免 device-in-use
+    await new Promise(r => setTimeout(r, 400));   // let the device release, avoid device-in-use
   }
 }
 
@@ -146,7 +153,7 @@ document.getElementById("run").addEventListener("click", async () => {
   for (let i = 0; i < cases.length; i++) {
     await runCase(i, cases[i], audioCtx);
   }
-  log("\n=== 完成。对比 WebView2 与 Edge 的结果。 ===");
+  log("\n=== Done. ===");
   await audioCtx.close();
   document.getElementById("run").disabled = false;
 });

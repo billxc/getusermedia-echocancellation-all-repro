@@ -3,6 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0b5c44">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="EC:all repro">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>getUserMedia echoCancellation test</title>
 <style>
   body { font: 14px/1.5 -apple-system, system-ui, sans-serif; margin: 24px; color: #1b1b1b; }
@@ -184,6 +191,14 @@ document.getElementById("run").addEventListener("click", async () => {
   await audioCtx.close();
   document.getElementById("run").disabled = false;
 });
+</script>
+<script>
+  // Register the service worker so this page is installable as a PWA.
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(e => console.warn('SW reg failed', e));
+    });
+  }
 </script>
 </body>
 </html>

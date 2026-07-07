@@ -155,9 +155,13 @@ async function runCase(i, c, audioCtx) {
     addRow(i, c, ecApplied, rms, verdict);
   } catch (err) {
     log(`    x getUserMedia rejected: ${err.name}: ${err.message}`);
+    const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const detail = err.message
+      ? `<div class="mono">${esc(err.message)}</div>`
+      : `<div class="mono">(no message)</div>`;
     const v = err.name === "OverconstrainedError"
-      ? `<span class="warn">unsupported (OverconstrainedError)</span>`
-      : `<span class="bad">${err.name}</span>`;
+      ? `<span class="warn">unsupported (OverconstrainedError)</span>${detail}`
+      : `<span class="bad">${esc(err.name)}</span>${detail}`;
     addRow(i, c, "&mdash;", null, v);
   } finally {
     if (stream) stream.getTracks().forEach(t => t.stop());
